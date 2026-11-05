@@ -1,8 +1,8 @@
 $ErrorActionPreference = "Stop"
 $ImageUrl = "https://raw.githubusercontent.com/oeraldosilva/pg/main/wallpaper.jpg"
-$Dir  = "C:\ProgramData\ICMP"
-$Img  = "$Dir\wallpaper_pg.jpg"
-$Log  = "$Dir\wallpaper_log.txt"
+$Dir = "C:\ProgramData\ICMP"
+$Img = "$Dir\wallpaper_pg.jpg"
+$Log = "$Dir\wallpaper_log.txt"
 
 New-Item -ItemType Directory -Path $Dir -Force | Out-Null
 function Log($m) { "$(Get-Date -Format s) | $m" | Out-File $Log -Append }
@@ -18,7 +18,7 @@ try {
     if ($isSystem) {
         $exp = Get-CimInstance Win32_Process -Filter "Name='explorer.exe'" | Select-Object -First 1
         if (-not $exp) { Log "nenhum usuario logado; nada aplicado"; return }
-        $sid  = (Invoke-CimMethod -InputObject $exp -MethodName GetOwnerSid).Sid
+        $sid = (Invoke-CimMethod -InputObject $exp -MethodName GetOwnerSid).Sid
         $hive = "Registry::HKEY_USERS\$sid"
     } else {
         $hive = "HKCU:"
@@ -48,14 +48,21 @@ Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class WP 
     Set-Content -Path $applyFile -Value $apply -Encoding ASCII
 
     if ($isSystem) {
-        $user = (Get-CimInstance Win32_ComputerSystem).UserName
-        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$applyFile`""
-        $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive
-        Register-ScheduledTask -TaskName "ICMP_ApplyWallpaper" -Action $action -Principal $principal -Force | Out-Null
-        Start-ScheduledTask -TaskName "ICMP_ApplyWallpaper"
-        Start-Sleep -Seconds 5
-        Unregister-ScheduledTask -TaskName "ICMP_ApplyWallpaper" -Confirm:$false
-        Log "atualizacao imediata disparada para $user"
+        try {
+            $owner = Invoke-CimMethod -InputObject $exp -MethodName GetOwner
+            if (-not $owner.User) { throw "dono do explorer nao identificado" }
+            $user = "$($owner.Domain)\$($owner.User)"
+            $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$applyFile`""
+            $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive
+            Register-ScheduledTask -TaskName "ICMP_ApplyWallpaper" -Action $action -Principal $principal -Force | Out-Null
+            Start-ScheduledTask -TaskName "ICMP_ApplyWallpaper"
+            Start-Sleep -Seconds 5
+            Unregister-ScheduledTask -TaskName "ICMP_ApplyWallpaper" -Confirm:$false
+            Log "atualizacao imediata disparada para $user"
+        } catch {
+            Unregister-ScheduledTask -TaskName "ICMP_ApplyWallpaper" -Confirm:$false -ErrorAction SilentlyContinue
+            Log "refresh imediato falhou ($($_.Exception.Message)); sera aplicado no proximo login"
+        }
     } else {
         powershell.exe -NoProfile -ExecutionPolicy Bypass -File $applyFile
         Log "atualizacao imediata aplicada"
